@@ -5,10 +5,20 @@ services:
   postfix:
     image: ghcr.io/moerchel/docker-postfix:main
     container_name: postfix
-    env_file:
-      - .env
+    environment:
+      - SMTP_SERVER=${SMTP_SERVER}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SERVER_HOSTNAME=${SERVER_HOSTNAME}
+      - SMTP_HEADER_TAG=${SMTP_HEADER_TAG}
+      - SMTP_NETWORKS=${SMTP_NETWORKS}
+      - SMTP_PASSWORD_FILE=${SMTP_PASSWORD_FILE}
+      - ALWAYS_ADD_MISSING_HEADERS=${ALWAYS_ADD_MISSING_HEADERS}
+      - OVERWRITE_FROM=${OVERWRITE_FROM}
+      - DESTINATION=${DESTINATION}
     ports:
-      - '25:25'
+      - '2525:25'
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - ./secrets/:/secrets/
