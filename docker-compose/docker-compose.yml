@@ -1,0 +1,15 @@
+version: '3'
+
+services:
+
+  postfix:
+    build: .
+    container_name: postfix
+    env_file:
+      - .env
+    ports:
+      - '25:25'
+    volumes:
+      - '/etc/localtime:/etc/localtime:ro'
+      - ./secrets/:/secrets/
+    restart: unless-stopped
