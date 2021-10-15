@@ -10,6 +10,6 @@ services:
     ports:
       - '25:25'
     volumes:
-      - '/etc/localtime:/etc/localtime:ro'
+      - /etc/localtime:/etc/localtime:ro
       - ./secrets/:/secrets/
     restart: unless-stopped
