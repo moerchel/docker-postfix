@@ -13,38 +13,44 @@ function add_config_value() {
  postconf -e "${key} = ${value}"
 }
 
-# Read password from file to avoid unsecure env variables
+# Read password and username from file to avoid unsecure env variables
 if [ -n "${SMTP_PASSWORD_FILE}" ]; then [ -f "${SMTP_PASSWORD_FILE}" ] && read SMTP_PASSWORD < ${SMTP_PASSWORD_FILE} || echo "SMTP_PASSWORD_FILE defined, but file not existing, skipping."; fi
+if [ -n "${SMTP_USERNAME_FILE}" ]; then [ -f "${SMTP_USERNAME_FILE}" ] && read SMTP_USERNAME < ${SMTP_USERNAME_FILE} || echo "SMTP_USERNAME_FILE defined, but file not existing, skipping."; fi
 
 [ -z "${SMTP_SERVER}" ] && echo "SMTP_SERVER is not set" && exit 1
-[ -z "${SMTP_USERNAME}" ] && echo "SMTP_USERNAME is not set" && exit 1
-[ -z "${SMTP_PASSWORD}" ] && echo "SMTP_PASSWORD is not set" && exit 1
 [ -z "${SERVER_HOSTNAME}" ] && echo "SERVER_HOSTNAME is not set" && exit 1
+[ ! -z "${SMTP_USERNAME}" -a -z "${SMTP_PASSWORD}" ] && echo "SMTP_USERNAME is set but SMTP_PASSWORD is not set" && exit 1
 
 SMTP_PORT="${SMTP_PORT:-587}"
-SMTP_TLS_WRAPPERMODE="${SMTP_TLS_WRAPPERMODE:-no}"
-SMTP_TLS_SECURITY_LEVEL="${SMTP_TLS_SECURITY_LEVEL:-may}"
 
 #Get the domain from the server host name
 DOMAIN=`echo ${SERVER_HOSTNAME} | awk 'BEGIN{FS=OFS="."}{print $(NF-1),$NF}'`
 
 # Set needed config options
+add_config_value "maillog_file" "/dev/stdout"
 add_config_value "myhostname" ${SERVER_HOSTNAME}
 add_config_value "mydomain" ${DOMAIN}
-add_config_value "mydestination" 'localhost'
+add_config_value "mydestination" "${DESTINATION:-localhost}"
 add_config_value "myorigin" '$mydomain'
 add_config_value "relayhost" "[${SMTP_SERVER}]:${SMTP_PORT}"
-add_config_value "sender_canonical_maps" "static:${SMTP_USERNAME}"
 add_config_value "smtp_use_tls" "yes"
-add_config_value "smtp_sasl_auth_enable" "yes"
-add_config_value "smtp_sasl_password_maps" "lmdb:/etc/postfix/sasl_passwd"
-add_config_value "smtp_sasl_security_options" "noanonymous"
-add_config_value "smtp_tls_wrappermode" "${SMTP_TLS_WRAPPERMODE}"
-add_config_value "smtp_tls_security_level" "${SMTP_TLS_SECURITY_LEVEL}"
+if [ ! -z "${SMTP_USERNAME}" ]; then
+  add_config_value "smtp_sasl_auth_enable" "yes"
+  add_config_value "smtp_sasl_password_maps" "lmdb:/etc/postfix/sasl_passwd"
+  add_config_value "smtp_sasl_security_options" "noanonymous"
+fi
 add_config_value "always_add_missing_headers" "${ALWAYS_ADD_MISSING_HEADERS:-no}"
+#Also use "native" option to allow looking up hosts added to /etc/hosts via
+# docker options (issue #51)
+add_config_value "smtp_host_lookup" "native,dns"
+
+if [ "${SMTP_PORT}" = "465" ]; then
+  add_config_value "smtp_tls_wrappermode" "yes"
+  add_config_value "smtp_tls_security_level" "encrypt"
+fi
 
 # Create sasl_passwd file with auth credentials
-if [ ! -f /etc/postfix/sasl_passwd ]; then
+if [ ! -f /etc/postfix/sasl_passwd -a ! -z "${SMTP_USERNAME}" ]; then
   grep -q "${SMTP_SERVER}" /etc/postfix/sasl_passwd  > /dev/null 2>&1
   if [ $? -gt 0 ]; then
     echo "Adding SASL authentication configuration"
@@ -74,9 +80,7 @@ fi
 add_config_value "mynetworks" "${nets}"
 
 if [ ! -z "${OVERWRITE_FROM}" ]; then
-  #echo -e "/^From:.*$/ REPLACE From: $OVERWRITE_FROM" > /etc/postfix/smtp_header_checks
-  #postfix/smtp[114]: 1D3268D843: replace: header From: Bill <postfix@bocata.de>: From: postfix@bocata.de
-  echo -e "/^From:.*/ REPLACE From: $OVERWRITE_FROM" > /etc/postfix/smtp_header_checks
+  echo -e "/^From:.*$/ REPLACE From: $OVERWRITE_FROM" > /etc/postfix/smtp_header_checks
   postmap /etc/postfix/smtp_header_checks
   postconf -e 'smtp_header_checks = regexp:/etc/postfix/smtp_header_checks'
   echo "Setting configuration option OVERWRITE_FROM with value: ${OVERWRITE_FROM}"
@@ -88,4 +92,4 @@ fi
 # starting services
 rm -f /var/spool/postfix/pid/master.pid
 
-exec supervisord -c /etc/supervisord.conf
+exec /usr/sbin/postfix -c /etc/postfix start-fg
