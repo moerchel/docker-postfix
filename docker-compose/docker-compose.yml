@@ -3,7 +3,7 @@ version: '3'
 services:
 
   postfix:
-    build: .
+    image: ghcr.io/moerchel/docker-postfix:main
     container_name: postfix
     env_file:
       - .env
