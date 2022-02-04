@@ -62,14 +62,14 @@ fi
 #Set header tag
 if [ ! -z "${SMTP_HEADER_TAG}" ]; then
   postconf -e "header_checks = regexp:/etc/postfix/header_tag"
-  echo -e "/^MIME-Version:/i PREPEND RelayTag: $SMTP_HEADER_TAG\n/^Content-Transfer-Encoding:/i PREPEND RelayTag: $SMTP_HEADER_TAG" > /etc/postfix/header_tag
+  echo -e "/^MIME-Version:/i PREPEND RelayTag: ${SMTP_HEADER_TAG}\n/^Content-Transfer-Encoding:/i PREPEND RelayTag: $SMTP_HEADER_TAG" > /etc/postfix/header_tag
   echo "Setting configuration option SMTP_HEADER_TAG with value: ${SMTP_HEADER_TAG}"
 fi
 
 #Check for subnet restrictions
 nets='10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16'
 if [ ! -z "${SMTP_NETWORKS}" ]; then
-        for i in $(sed 's/,/\ /g' <<<$SMTP_NETWORKS); do
+        for i in $(sed 's/,/\ /g' <<<${SMTP_NETWORKS}); do
                 if grep -Eq "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}" <<<$i ; then
                         nets+=", $i"
                 else
@@ -80,10 +80,17 @@ fi
 add_config_value "mynetworks" "${nets}"
 
 if [ ! -z "${OVERWRITE_FROM}" ]; then
-  echo -e "/^From:.*$/ REPLACE From: $OVERWRITE_FROM" > /etc/postfix/smtp_header_checks
+  echo -e "/^From:.*$/ REPLACE From: ${OVERWRITE_FROM}" > /etc/postfix/smtp_header_checks
   postmap /etc/postfix/smtp_header_checks
   postconf -e 'smtp_header_checks = regexp:/etc/postfix/smtp_header_checks'
   echo "Setting configuration option OVERWRITE_FROM with value: ${OVERWRITE_FROM}"
+fi
+
+if [ ! -z "${OVERWRITE_SENDER}" ]; then
+  echo -e "/^(.*@).*$/    \${1}${OVERWRITE_SENDER}" > /etc/postfix/sender_canonical
+  postmap /etc/postfix/sender_canonical
+  postconf -e 'sender_canonical_maps = regexp:/etc/postfix/sender_canonical'
+  echo "Setting configuration option OVERWRITE_SENDER with value: ${OVERWRITE_SENDER}"
 fi
 
 #Start services
