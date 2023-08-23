@@ -108,7 +108,7 @@ To see the email logs in real time:
 
     docker logs -f postfix
 
-### A note about using gmail as a relay
+#### A note about using gmail as a relay
 
 Gmail by default [does not allow email clients that don't use OAUTH 2](http://googleonlinesecurity.blogspot.co.uk/2014/04/new-security-measures-will-affect-older.html)
 for authentication (like Thunderbird or Outlook). First you need to enable access to "Less secure apps" on your
@@ -117,6 +117,6 @@ for authentication (like Thunderbird or Outlook). First you need to enable acces
 Also take into account that email `From:` header will contain the email address of the account being used to
 authenticate against the Gmail SMTP server(SMTP_USERNAME), the one on the email will be ignored by Gmail unless you [add it as an alias](https://support.google.com/mail/answer/22370).
 
-## Debugging
+### Debugging
 
 If you need troubleshooting the container you can set the environment variable _DEBUG=yes_ for a more verbose output.
