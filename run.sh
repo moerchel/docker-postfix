@@ -14,8 +14,8 @@ function add_config_value() {
 }
 
 # Read password and username from file to avoid unsecure env variables
-if [ -n "${SMTP_PASSWORD_FILE}" ]; then [ -f "${SMTP_PASSWORD_FILE}" ] && read SMTP_PASSWORD < ${SMTP_PASSWORD_FILE} || echo "SMTP_PASSWORD_FILE defined, but file not existing, skipping."; fi
-if [ -n "${SMTP_USERNAME_FILE}" ]; then [ -f "${SMTP_USERNAME_FILE}" ] && read SMTP_USERNAME < ${SMTP_USERNAME_FILE} || echo "SMTP_USERNAME_FILE defined, but file not existing, skipping."; fi
+if [ -n "${SMTP_PASSWORD_FILE}" ]; then [ -e "${SMTP_PASSWORD_FILE}" ] && SMTP_PASSWORD=$(cat "${SMTP_PASSWORD_FILE}") || echo "SMTP_PASSWORD_FILE defined, but file not existing, skipping."; fi
+if [ -n "${SMTP_USERNAME_FILE}" ]; then [ -e "${SMTP_USERNAME_FILE}" ] && SMTP_USERNAME=$(cat "${SMTP_USERNAME_FILE}") || echo "SMTP_USERNAME_FILE defined, but file not existing, skipping."; fi
 
 [ -z "${SMTP_SERVER}" ] && echo "SMTP_SERVER is not set" && exit 1
 [ -z "${SERVER_HOSTNAME}" ] && echo "SERVER_HOSTNAME is not set" && exit 1
@@ -66,6 +66,13 @@ if [ ! -z "${SMTP_HEADER_TAG}" ]; then
   echo "Setting configuration option SMTP_HEADER_TAG with value: ${SMTP_HEADER_TAG}"
 fi
 
+#Enable logging of subject line
+if [ "${LOG_SUBJECT}" == "yes" ]; then
+  postconf -e "header_checks = regexp:/etc/postfix/header_checks"
+  echo -e "/^Subject:/ WARN" >> /etc/postfix/header_checks
+  echo "Enabling logging of subject line"
+fi
+
 #Check for subnet restrictions
 nets='10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16'
 if [ ! -z "${SMTP_NETWORKS}" ]; then
@@ -79,6 +86,12 @@ if [ ! -z "${SMTP_NETWORKS}" ]; then
 fi
 add_config_value "mynetworks" "${nets}"
 
+# Set SMTPUTF8
+if [ ! -z "${SMTPUTF8_ENABLE}" ]; then
+  postconf -e "smtputf8_enable = ${SMTPUTF8_ENABLE}"
+  echo "Setting configuration option smtputf8_enable with value: ${SMTPUTF8_ENABLE}"
+fi
+
 if [ ! -z "${OVERWRITE_FROM}" ]; then
   echo -e "/^From:.*$/ REPLACE From: ${OVERWRITE_FROM}" > /etc/postfix/smtp_header_checks
   postmap /etc/postfix/smtp_header_checks
@@ -91,6 +104,12 @@ if [ ! -z "${OVERWRITE_SENDER}" ]; then
   postmap /etc/postfix/sender_canonical
   postconf -e 'sender_canonical_maps = regexp:/etc/postfix/sender_canonical'
   echo "Setting configuration option OVERWRITE_SENDER with value: ${OVERWRITE_SENDER}"
+fi
+
+# Set message_size_limit
+if [ ! -z "${MESSAGE_SIZE_LIMIT}" ]; then
+  postconf -e "message_size_limit = ${MESSAGE_SIZE_LIMIT}"
+  echo "Setting configuration option message_size_limit with value: ${MESSAGE_SIZE_LIMIT}"
 fi
 
 #Start services
