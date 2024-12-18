@@ -1,5 +1,5 @@
 # Dockerfile for a Postfix email relay service
-FROM alpine:3.20
+FROM alpine:3.21.0
 LABEL maintainer='moerchel'
 
 RUN apk update && \
