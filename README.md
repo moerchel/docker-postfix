@@ -4,6 +4,8 @@ Forked from [juanluisbaptiste/docker-postfix](https://github.com/juanluisbaptist
 
 ---
 
+Version: 20260416
+
 Simple Postfix SMTP TLS relay [docker](http://www.docker.com) alpine based image with no local authentication enabled (to be run in a secure LAN).
 
 This image is available for the following architectures:
