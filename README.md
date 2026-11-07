@@ -20,6 +20,8 @@ Images are published on [GitHub Container Registry](https://github.com/moerchel/
 * _YYYYMMDD_: releases (git tags like `20260416`) and the weekly automatic rebuilds that pick up Alpine security updates.
 * _sha-xxxxxxx_: the image built from a specific commit.
 
+Every image is scanned with [Trivy](https://github.com/aquasecurity/trivy) before it is published. Builds with fixable HIGH or CRITICAL vulnerabilities are not published, all findings are listed in the repository's [Security tab](https://github.com/moerchel/docker-postfix/security/code-scanning).
+
 ## Build instructions
 
 Clone this repo and then:

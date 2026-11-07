@@ -45,6 +45,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Upload of Trivy results to the Security tab
+      security-events: write
 
     steps:
       - name: Checkout repository
@@ -83,8 +85,52 @@ jobs:
             type=schedule,pattern={{date 'YYYYMMDD'}}
             type=sha
 
-      # Build and push Docker image with Buildx (don't push on PR).
+      # Build an amd64 image into the local docker daemon first, so it can be
+      # scanned before anything is published.
       # Scheduled builds skip the cache so "apk upgrade" really fetches updates.
+      - name: Build image for vulnerability scan
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          pull: true
+          no-cache: ${{ github.event_name == 'schedule' }}
+          load: true
+          tags: docker-postfix:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Report all known vulnerabilities to the repository's Security tab
+      - name: Trivy scan (report)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: docker-postfix:scan
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+
+      - name: Upload Trivy results to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+      # Fail the build (and don't publish) on HIGH/CRITICAL vulnerabilities
+      # that already have a fix available
+      - name: Trivy scan (gate)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: true
+        with:
+          image-ref: docker-postfix:scan
+          format: table
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      # Build and push the multi-arch image with Buildx (don't push on PR).
       - name: Build and push Docker image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
