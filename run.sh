@@ -35,6 +35,7 @@ add_config_value "maillog_file" "/dev/stdout"
 add_config_value "myhostname" "${SERVER_HOSTNAME}"
 add_config_value "mydomain" "${DOMAIN}"
 add_config_value "mydestination" "${DESTINATION:-localhost}"
+# shellcheck disable=SC2016 # $mydomain is a postfix variable, not a shell one
 add_config_value "myorigin" '$mydomain'
 add_config_value "relayhost" "[${SMTP_SERVER}]:${SMTP_PORT}"
 
@@ -130,15 +131,76 @@ if [ -n "${SMTPUTF8_ENABLE}" ]; then
   add_config_value "smtputf8_enable" "${SMTPUTF8_ENABLE}"
 fi
 
+# Rewrite the From: header of relayed mail
 if [ -n "${OVERWRITE_FROM}" ]; then
-  printf '/^From:.*$/ REPLACE From: %s\n' "${OVERWRITE_FROM}" > /etc/postfix/smtp_header_checks
+  if [ "${OVERWRITE_FROM_KEEP_NAME}" == "yes" ]; then
+    # Replace only the address and keep the original sender visible as
+    # display name, e.g.  From: root@server1  ->  From: "root@server1" <relay@company.com>
+    from_addr="${OVERWRITE_FROM}"
+    if [[ "${from_addr}" == *"<"*">"* ]]; then
+      from_addr=${from_addr##*<}; from_addr=${from_addr%%>*}
+    fi
+    # shellcheck disable=SC2016 # ${1} is a postfix regexp back-reference
+    {
+      # "Quoted Name" <addr>
+      printf '/^From:[[:space:]]*"([^"]*)"[[:space:]]*<[^>]*>[[:space:]]*$/ REPLACE From: "${1}" <%s>\n' "${from_addr}"
+      # Name <addr>
+      printf '/^From:[[:space:]]*([^"<[:space:]][^"<]*)<[^>]*>[[:space:]]*$/ REPLACE From: ${1}<%s>\n' "${from_addr}"
+      # addr or <addr> -> the address becomes the display name
+      printf '/^From:[[:space:]]*<?([^<>"[:space:]]+)>?[[:space:]]*$/ REPLACE From: "${1}" <%s>\n' "${from_addr}"
+      # addr (Comment), e.g. cron: root@server1 (Cron Daemon)
+      printf '/^From:[[:space:]]*([^<>"()[:space:]]+)[[:space:]]*\\(([^<>"()]*)\\)[[:space:]]*$/ REPLACE From: "${2} (${1})" <%s>\n' "${from_addr}"
+      # anything else
+      printf '/^From:.*$/ REPLACE From: <%s>\n' "${from_addr}"
+    } > /etc/postfix/smtp_header_checks
+  else
+    printf '/^From:.*$/ REPLACE From: %s\n' "${OVERWRITE_FROM}" > /etc/postfix/smtp_header_checks
+  fi
   add_config_value "smtp_header_checks" "regexp:/etc/postfix/smtp_header_checks"
 fi
 
+# Rewrite the envelope sender (MAIL FROM) of relayed mail.
+# A domain (company.com) only replaces the domain, a full address
+# (relay@company.com) replaces the whole sender address.
 if [ -n "${OVERWRITE_SENDER}" ]; then
-  # shellcheck disable=SC2016 # ${1} is a postfix regexp back-reference
-  printf '/^(.*@).*$/    ${1}%s\n' "${OVERWRITE_SENDER}" > /etc/postfix/sender_canonical
+  if [[ "${OVERWRITE_SENDER}" == *@* ]]; then
+    printf '/^.+$/    %s\n' "${OVERWRITE_SENDER}" > /etc/postfix/sender_canonical
+  else
+    # shellcheck disable=SC2016 # ${1} is a postfix regexp back-reference
+    printf '/^(.*@).*$/    ${1}%s\n' "${OVERWRITE_SENDER}" > /etc/postfix/sender_canonical
+  fi
   add_config_value "sender_canonical_maps" "regexp:/etc/postfix/sender_canonical"
+fi
+
+# Optionally offer STARTTLS to the clients in the LAN (never required, so
+# clients without TLS keep working). Uses a mounted certificate or a
+# self-signed one generated on first start.
+if [ "${SMTPD_TLS}" == "yes" ]; then
+  if [ -n "${SMTPD_TLS_CERT_FILE}${SMTPD_TLS_KEY_FILE}" ]; then
+    if [ -z "${SMTPD_TLS_CERT_FILE}" ] || [ -z "${SMTPD_TLS_KEY_FILE}" ]; then
+      echo "ERROR: SMTPD_TLS_CERT_FILE and SMTPD_TLS_KEY_FILE must be set together" && exit 1
+    fi
+    tls_cert="${SMTPD_TLS_CERT_FILE}"; tls_key="${SMTPD_TLS_KEY_FILE}"
+  else
+    tls_cert=/etc/postfix/tls/relay.crt; tls_key=/etc/postfix/tls/relay.key
+    if [ ! -f "${tls_cert}" ] || [ ! -f "${tls_key}" ]; then
+      echo "Generating self-signed TLS certificate for ${SERVER_HOSTNAME}"
+      mkdir -p /etc/postfix/tls
+      if ! (umask 077 && openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+              -subj "/CN=${SERVER_HOSTNAME}" -addext "subjectAltName=DNS:${SERVER_HOSTNAME}" \
+              -keyout "${tls_key}" -out "${tls_cert}" 2>/dev/null); then
+        echo "ERROR: Could not generate TLS certificate" && exit 1
+      fi
+    fi
+  fi
+  if [ ! -r "${tls_cert}" ] || [ ! -r "${tls_key}" ]; then
+    echo "ERROR: TLS certificate ${tls_cert} or key ${tls_key} not readable" && exit 1
+  fi
+  add_config_value "smtpd_tls_chain_files" "${tls_key}, ${tls_cert}"
+  add_config_value "smtpd_tls_security_level" "may"
+  add_config_value "smtpd_tls_received_header" "yes"
+else
+  add_config_value "smtpd_tls_security_level" "none"
 fi
 
 # Set message_size_limit

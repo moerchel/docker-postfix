@@ -85,13 +85,24 @@ The following env variable(s) are optional.
   OVERWRITE_FROM="Your Name" <email@company.com>
   ```
 
-* `OVERWRITE_SENDER` This will replace the domain of the envelope sender address with the specified domain for all email being relayed. Example settings:
+* `OVERWRITE_FROM_KEEP_NAME` Set to `yes` to replace only the address in the `From:` header and keep the original sender as display name, so you can still see which machine sent the mail:
 
   ```
-  OVERWRITE_SENDER=company.com
+  From: root@server1                  ->  From: "root@server1" <email@company.com>
+  From: "Backup Job" <backup@nas>     ->  From: "Backup Job" <email@company.com>
+  From: root@server1 (Cron Daemon)    ->  From: "Cron Daemon (root@server1)" <email@company.com>
   ```
 
-  will replace a sender address `username@home.net` with `username@company.com`.
+* `OVERWRITE_SENDER` This will rewrite the envelope sender address (`MAIL FROM`, used for bounces) for all email being relayed. A domain replaces only the domain, a full address replaces the whole address. Example settings:
+
+  ```
+  OVERWRITE_SENDER=company.com          # username@home.net -> username@company.com
+  OVERWRITE_SENDER=relay@company.com    # username@home.net -> relay@company.com
+  ```
+
+* `SMTPD_TLS` Set to `yes` to offer STARTTLS to the clients in the LAN. TLS is optional, clients using plain SMTP keep working. Without own certificate a self-signed certificate for `SERVER_HOSTNAME` is generated on the first start.
+
+* `SMTPD_TLS_CERT_FILE` / `SMTPD_TLS_KEY_FILE` (Optional, only with `SMTPD_TLS=yes`) Mounted certificate (PEM, may contain the chain) and key to use instead of the self-signed one, e.g. `/secrets/relay.crt` and `/secrets/relay.key`.
 
 * `DESTINATION` This will define a list of domains from which incoming messages will be accepted.
 
@@ -102,6 +113,15 @@ The following env variable(s) are optional.
 * `MESSAGE_SIZE_LIMIT` This will change the default limit of 10240000 bytes (10MB).
 
 * `DEBUG` Set to `yes` for a verbose output of the start script.
+
+### Sender addresses
+
+Most mail providers only accept mail whose sender matches the account used for authentication. Servers and devices in the LAN often send as `root@server1` or `printer@localdomain`, which the provider will reject. Rewrite both addresses to your account and keep the original sender visible:
+
+    SMTP_USERNAME=relay@company.com
+    OVERWRITE_SENDER=relay@company.com
+    OVERWRITE_FROM=relay@company.com
+    OVERWRITE_FROM_KEEP_NAME=yes
 
 ### Security note: don't become an open relay
 
