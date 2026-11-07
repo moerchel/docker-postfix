@@ -1,0 +1,3 @@
+# Only run.sh is needed in the build context. Keep secrets and repo data out.
+*
+!run.sh

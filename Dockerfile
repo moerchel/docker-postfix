@@ -1,19 +1,22 @@
 # Dockerfile for a Postfix email relay service
-FROM alpine:3.23
-LABEL maintainer='moerchel'
+FROM alpine:3.24
+LABEL org.opencontainers.image.title="docker-postfix" \
+      org.opencontainers.image.description="Postfix SMTP TLS relay" \
+      org.opencontainers.image.source="https://github.com/moerchel/docker-postfix" \
+      org.opencontainers.image.licenses="GPL-3.0"
 
-RUN apk update && \
-    apk upgrade && \
-    apk add bash gawk cyrus-sasl cyrus-sasl-login cyrus-sasl-crammd5 mailx \
-    postfix && \
-    rm -rf /var/cache/apk/* && \
-    mkdir -p /var/log/supervisor/ /var/run/supervisor/ && \
-    sed -i -e 's/inet_interfaces = localhost/inet_interfaces = all/g' /etc/postfix/main.cf
+# Versions are not pinned on purpose: the weekly rebuild should pick up the
+# latest security fixes of the Alpine branch.
+# hadolint ignore=DL3018
+RUN apk upgrade --no-cache && \
+    apk add --no-cache bash ca-certificates cyrus-sasl cyrus-sasl-login cyrus-sasl-crammd5 mailx openssl postfix && \
+    newaliases
 
-COPY run.sh /
-RUN chmod +x /run.sh
-RUN newaliases
+COPY --chmod=755 run.sh /run.sh
 
 EXPOSE 25
-#ENTRYPOINT ["/run.sh"]
+
+HEALTHCHECK --interval=60s --timeout=10s --start-period=15s --retries=3 \
+  CMD ["postfix", "status"]
+
 CMD ["/run.sh"]

@@ -1,26 +1,25 @@
 services:
 
   postfix:
-    image: ghcr.io/moerchel/docker-postfix:main
+    image: ghcr.io/moerchel/docker-postfix:latest
     container_name: postfix
-    environment:
-      - SMTP_SERVER=${SMTP_SERVER}
-      - SMTP_PORT=${SMTP_PORT}
-      - SMTP_USERNAME=${SMTP_USERNAME}
-      - SMTP_PASSWORD=${SMTP_PASSWORD}
-      - SERVER_HOSTNAME=${SERVER_HOSTNAME}
-      - SMTP_HEADER_TAG=${SMTP_HEADER_TAG}
-      - SMTP_NETWORKS=${SMTP_NETWORKS}
-      - SMTP_PASSWORD_FILE=${SMTP_PASSWORD_FILE}
-      - ALWAYS_ADD_MISSING_HEADERS=${ALWAYS_ADD_MISSING_HEADERS}
-      - OVERWRITE_FROM=${OVERWRITE_FROM}
-      - DESTINATION=${DESTINATION}
-      - LOG_SUBJECT=${LOG_SUBJECT}
-      - SMTPUTF8_ENABLE=${SMTPUTF8_ENABLE}
-      - MESSAGE_SIZE_LIMIT=${MESSAGE_SIZE_LIMIT}
+    # All variables from .env (see .env.example) are passed to the container
+    env_file: .env
     ports:
-      - '2525:25'
+      # Only bind to the address the clients use. Binding to all interfaces
+      # can turn the container into an open relay (see README).
+      - '${POSTFIX_BIND_ADDRESS:-127.0.0.1}:${POSTFIX_HOST_PORT:-2525}:25'
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      - ./secrets/:/secrets/
+      - ./secrets/:/secrets/:ro
+      # Keep queued mails when the container is recreated
+      - postfix-spool:/var/spool/postfix
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
     restart: unless-stopped
+
+volumes:
+  postfix-spool:
