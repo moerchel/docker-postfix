@@ -130,6 +130,8 @@ The relay accepts mail from every address in the allowed networks without authen
     -p 192.168.1.10:25:25     # LAN address of the docker host
     -p 127.0.0.1:2525:25      # only local clients
 
+With docker compose this is set with `POSTFIX_BIND_ADDRESS` (see [docker compose](#docker-compose)).
+
 Depending on the docker setup (userland proxy, rootless docker, IPv6) connections from outside can reach the container with the docker gateway address (e.g. `172.17.0.1`), which is part of the default private networks. If in doubt, use `SMTP_NETWORKS_ONLY=yes` together with `SMTP_NETWORKS`.
 
 ### Examples
@@ -164,7 +166,52 @@ Use the provided [docker-compose](docker-compose/docker-compose.yml) setup for p
     cp .env.example .env          # and edit .env
     docker compose up -d
 
-All variables in `.env` are passed to the container. By default the port is only published on `127.0.0.1:2525`; set `POSTFIX_BIND_ADDRESS` (and `POSTFIX_HOST_PORT`) in `.env` to make the relay reachable from your LAN.
+All variables in `.env` are passed to the container. Two additional variables control on which host address and port the relay is published:
+
+| Variable | Default | Description |
+|---|---|---|
+| `POSTFIX_BIND_ADDRESS` | `127.0.0.1` | Host address the SMTP port is published on. With the default the relay is **only reachable from the docker host itself**. Set it to the LAN address of the docker host to accept mail from other machines. |
+| `POSTFIX_HOST_PORT` | `2525` | Host port the clients connect to. |
+
+#### Example: relay for the LAN on port 2525
+
+The docker host has the address `10.111.40.141`, the servers and other machines are in `10.111.10.0/24` and `10.111.40.0/24`. They send mail without username and password, the relay forwards it with TLS and authentication to the mail provider:
+
+    # where the relay is reachable
+    POSTFIX_BIND_ADDRESS=10.111.40.141
+    POSTFIX_HOST_PORT=2525
+
+    # who may send (only these networks, no login needed)
+    SMTP_NETWORKS_ONLY=yes
+    SMTP_NETWORKS=10.111.10.0/24,10.111.40.0/24
+
+    # mail provider
+    SMTP_SERVER=smtp.company.com
+    SMTP_PORT=587
+    SMTP_TLS_SECURITY_LEVEL=secure
+    SMTP_USERNAME=relay@company.com
+    SMTP_PASSWORD_FILE=/secrets/smtp_password
+    SERVER_HOSTNAME=relay.company.com
+
+    # send everything with the provider account, keep the original sender visible
+    OVERWRITE_SENDER=relay@company.com
+    OVERWRITE_FROM=relay@company.com
+    OVERWRITE_FROM_KEEP_NAME=yes
+
+    # optional: offer STARTTLS to clients that insist on it
+    SMTPD_TLS=yes
+
+Put the password into `secrets/smtp_password`. After `docker compose up -d`, `docker compose ps` must show the port as `10.111.40.141:2525->25/tcp`.
+
+Settings for the clients:
+
+* SMTP server: `10.111.40.141`, port `2525`
+* Authentication: none
+* Encryption: none, or STARTTLS if `SMTPD_TLS=yes` is set. The generated certificate is self-signed, so clients using STARTTLS must not verify it (or mount your own certificate with `SMTPD_TLS_CERT_FILE` / `SMTPD_TLS_KEY_FILE`).
+
+To send a test mail from a Windows machine in the LAN:
+
+    Send-MailMessage -SmtpServer 10.111.40.141 -Port 2525 -From test@company.com -To you@example.com -Subject Test -Body Test
 
 To see the email logs in real time:
 
