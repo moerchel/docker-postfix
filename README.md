@@ -16,9 +16,16 @@ This image is available for the following architectures:
 
 Images are published on [GitHub Container Registry](https://github.com/moerchel/docker-postfix/pkgs/container/docker-postfix):
 
-* _latest_ / _main_: current state of the `main` branch.
-* _YYYYMMDD_: releases (git tags like `20260416`) and the weekly automatic rebuilds that pick up Alpine security updates.
+* _latest_ / _main_: the newest release.
+* _YYYYMMDD_: a specific [release](https://github.com/moerchel/docker-postfix/releases), e.g. `20261107`. Further releases on the same day are numbered `20261107.1`, `20261107.2`, …
 * _sha-xxxxxxx_: the image built from a specific commit.
+
+Releases are created automatically:
+
+* for every change of the image on the `main` branch (changes to documentation only don't create a release),
+* by the weekly rebuild every Monday, if Alpine provides updated packages (e.g. security fixes). The release notes list the updated packages. Without updates no new image and no release is published.
+
+Old images are removed weekly from the registry: untagged images (old builds) and `sha-*` tags older than 30 days. Release images, _latest_ and _main_ are kept.
 
 Every image is scanned with [Trivy](https://github.com/aquasecurity/trivy) before it is published. Builds with fixable HIGH or CRITICAL vulnerabilities are not published, all findings are listed in the repository's [Security tab](https://github.com/moerchel/docker-postfix/security/code-scanning).
 

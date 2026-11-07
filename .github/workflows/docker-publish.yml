@@ -1,13 +1,19 @@
 name: Docker
 
 on:
-  # Weekly rebuild to pick up Alpine security updates
+  # Weekly rebuild. A release is only created if Alpine packages changed.
   schedule:
     - cron: '17 4 * * 1'
   workflow_dispatch:
   push:
     branches: [ main ]
-    # Publish date tags (e.g. 20260416) and semver tags (e.g. v1.2.3) as releases.
+    # Changes that don't affect the image don't trigger a build/release
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'docker-compose/**'
+      - '.github/dependabot.yml'
+    # Manually pushed tags (e.g. 20260416, v1.2.3) are published as image tags
     tags: [ '2*', 'v*.*.*' ]
   pull_request:
     branches: [ main ]
@@ -20,10 +26,11 @@ env:
 # No permissions by default, each job requests what it needs
 permissions: {}
 
-# Cancel superseded runs of the same branch/PR
+# One run per branch at a time; only superseded PR runs are cancelled,
+# a running publish on main is never interrupted
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
@@ -47,6 +54,11 @@ jobs:
       packages: write
       # Upload of Trivy results to the Security tab
       security-events: write
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+      version: ${{ steps.prepare.outputs.version }}
+      title: ${{ steps.prepare.outputs.title }}
+      notes: ${{ steps.prepare.outputs.notes }}
 
     steps:
       - name: Checkout repository
@@ -68,22 +80,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Extract metadata (tags, labels) for Docker
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=schedule,pattern={{date 'YYYYMMDD'}}
-            type=sha
 
       # Build an amd64 image into the local docker daemon first, so it can be
       # scanned before anything is published.
@@ -130,15 +126,126 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: '1'
 
-      # Build and push the multi-arch image with Buildx (don't push on PR).
+      # Compare the installed packages with the currently published image and
+      # decide whether to publish and to create a release:
+      #   push to main / manual run on main -> publish + release
+      #   weekly schedule                   -> publish + release only if packages changed
+      #   pushed tag                        -> publish (image tag = git tag), no release
+      - name: Compare packages with published image
+        id: decide
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          PUBLISHED: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          docker run --rm --entrypoint apk docker-postfix:scan info -v | sort > new.txt
+          if docker pull -q --platform linux/amd64 "$PUBLISHED" >/dev/null 2>&1; then
+            docker run --rm --platform linux/amd64 --entrypoint apk "$PUBLISHED" info -v | sort > old.txt
+          else
+            : > old.txt
+          fi
+
+          # apk lists "name-version-rN"; build a table of changed packages
+          declare -A old new
+          while read -r l; do n=${l%-*-*}; old[$n]=${l#"$n"-}; done < old.txt
+          while read -r l; do n=${l%-*-*}; new[$n]=${l#"$n"-}; done < new.txt
+          for n in $(printf '%s\n' "${!old[@]}" "${!new[@]}" | sort -u); do
+            o=${old[$n]:-}; v=${new[$n]:-}
+            if [ "$o" != "$v" ]; then echo "| $n | ${o:--} | ${v:--} |"; fi
+          done > changes.md
+
+          changed=false
+          if [ -s changes.md ]; then changed=true; fi
+          on_main=false
+          if [ "$REF" = "refs/heads/main" ]; then on_main=true; fi
+          case "$EVENT" in
+            schedule) publish=$changed; release=$changed ;;
+            *)        publish=true;     release=$on_main ;;
+          esac
+          echo "Packages changed: $changed, publish: $publish, release: $release"
+          cat changes.md
+          {
+            echo "changed=$changed"
+            echo "publish=$publish"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
+
+      # Version YYYYMMDD (YYYYMMDD.1, .2, ... for further releases on the same day)
+      # and release notes
+      - name: Prepare release
+        id: prepare
+        if: steps.decide.outputs.release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          EVENT: ${{ github.event_name }}
+          CHANGED: ${{ steps.decide.outputs.changed }}
+        run: |
+          base=$(date -u +%Y%m%d); version=$base; n=0
+          while gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$version" >/dev/null 2>&1; do
+            n=$((n + 1)); version="$base.$n"
+          done
+
+          alpine=$(docker run --rm --entrypoint cat docker-postfix:scan /etc/alpine-release)
+          postfix=$(docker run --rm --entrypoint postconf docker-postfix:scan -h mail_version)
+          title="$version"
+          if [ "$EVENT" = "schedule" ]; then title="$version - Alpine package updates"; fi
+
+          {
+            echo "## Image"
+            echo
+            echo '```'
+            echo "docker pull $IMAGE:$version"
+            echo '```'
+            echo
+            echo "Also published as \`latest\` and \`main\`. Alpine $alpine, Postfix $postfix."
+            if [ "$CHANGED" = "true" ]; then
+              echo
+              echo "## Updated packages"
+              echo
+              echo "| Package | Previous | New |"
+              echo "|---|---|---|"
+              cat changes.md
+            fi
+          } > notes.md
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          {
+            echo "notes<<EOF_RELEASE_NOTES"
+            cat notes.md
+            echo "EOF_RELEASE_NOTES"
+          } >> "$GITHUB_OUTPUT"
+
+      # Extract metadata (tags, labels) for Docker
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.prepare.outputs.version || 'no-release' }},enable=${{ steps.decide.outputs.release == 'true' }}
+            type=sha
+
+      # Build (all PRs) and push (if decided above) the multi-arch image
       - name: Build and push Docker image
+        if: github.event_name == 'pull_request' || steps.decide.outputs.publish == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           pull: true
           no-cache: ${{ github.event_name == 'schedule' }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ steps.decide.outputs.publish == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -146,3 +253,23 @@ jobs:
           # Supply chain attestations
           provenance: mode=max
           sbom: true
+
+  # Git tag + GitHub release for the published image. Tags and releases
+  # created with the GITHUB_TOKEN don't trigger another workflow run.
+  release:
+    needs: build
+    if: needs.build.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+          TITLE: ${{ needs.build.outputs.title }}
+          NOTES: ${{ needs.build.outputs.notes }}
+        run: |
+          printf '%s\n' "$NOTES" > notes.md
+          gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$TITLE" --notes-file notes.md --generate-notes
