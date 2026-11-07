@@ -1,19 +1,19 @@
 # Dockerfile for a Postfix email relay service
 FROM alpine:3.23
-LABEL maintainer='moerchel'
+LABEL org.opencontainers.image.title="docker-postfix" \
+      org.opencontainers.image.description="Postfix SMTP TLS relay" \
+      org.opencontainers.image.source="https://github.com/moerchel/docker-postfix" \
+      org.opencontainers.image.licenses="GPL-3.0"
 
-RUN apk update && \
-    apk upgrade && \
-    apk add bash gawk cyrus-sasl cyrus-sasl-login cyrus-sasl-crammd5 mailx \
-    postfix && \
-    rm -rf /var/cache/apk/* && \
-    mkdir -p /var/log/supervisor/ /var/run/supervisor/ && \
-    sed -i -e 's/inet_interfaces = localhost/inet_interfaces = all/g' /etc/postfix/main.cf
+RUN apk upgrade --no-cache && \
+    apk add --no-cache bash ca-certificates cyrus-sasl cyrus-sasl-login cyrus-sasl-crammd5 mailx postfix && \
+    newaliases
 
-COPY run.sh /
-RUN chmod +x /run.sh
-RUN newaliases
+COPY --chmod=755 run.sh /run.sh
 
 EXPOSE 25
-#ENTRYPOINT ["/run.sh"]
+
+HEALTHCHECK --interval=60s --timeout=10s --start-period=15s --retries=3 \
+  CMD postfix status || exit 1
+
 CMD ["/run.sh"]
