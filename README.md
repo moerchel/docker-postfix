@@ -175,15 +175,11 @@ All variables in `.env` are passed to the container. Two additional variables co
 
 #### Example: relay for the LAN on port 2525
 
-The docker host has the address `10.111.40.141`, the servers and other machines are in `10.111.10.0/24` and `10.111.40.0/24`. They send mail without username and password, the relay forwards it with TLS and authentication to the mail provider:
+The docker host has the address `10.111.40.141`. All servers and other machines with a private IP address send mail without username and password, the relay forwards it with TLS and authentication to the mail provider:
 
     # where the relay is reachable
     POSTFIX_BIND_ADDRESS=10.111.40.141
     POSTFIX_HOST_PORT=2525
-
-    # who may send (only these networks, no login needed)
-    SMTP_NETWORKS_ONLY=yes
-    SMTP_NETWORKS=10.111.10.0/24,10.111.40.0/24
 
     # mail provider
     SMTP_SERVER=smtp.company.com
@@ -203,7 +199,29 @@ The docker host has the address `10.111.40.141`, the servers and other machines 
 
 Put the password into `secrets/smtp_password`. After `docker compose up -d`, `docker compose ps` must show the port as `10.111.40.141:2525->25/tcp`.
 
-Settings for the clients:
+#### Which clients may send
+
+By default every client with a private IPv4 address may send without login:
+
+| Network | Addresses |
+|---|---|
+| `10.0.0.0/8` | 10.0.0.0 – 10.255.255.255 |
+| `172.16.0.0/12` | 172.16.0.0 – 172.31.255.255 (includes the docker networks) |
+| `192.168.0.0/16` | 192.168.0.0 – 192.168.255.255 |
+| `127.0.0.0/8`, `[::1]/128` | localhost |
+
+To allow further networks (e.g. IPv6 or VPN ranges like `100.64.0.0/10`), add them with `SMTP_NETWORKS`:
+
+    SMTP_NETWORKS=100.64.0.0/10,fd00::/8
+
+To limit the relay to your own networks, set `SMTP_NETWORKS_ONLY=yes`. Then only localhost and the networks from `SMTP_NETWORKS` may send, all other clients get `Relay access denied`:
+
+    SMTP_NETWORKS_ONLY=yes
+    SMTP_NETWORKS=10.111.10.0/24,10.111.40.0/24
+
+Docker forwards the real IP address of the client to the container, so these rules apply to the machines in the LAN. Containers on the same docker host connect from their docker network (`172.x.x.x`); add it to `SMTP_NETWORKS` if they should still be able to send.
+
+#### Client settings
 
 * SMTP server: `10.111.40.141`, port `2525`
 * Authentication: none
