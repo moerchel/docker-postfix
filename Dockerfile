@@ -1,5 +1,5 @@
 # Dockerfile for a Postfix email relay service
-FROM alpine:3.23
+FROM alpine:3.24
 LABEL org.opencontainers.image.title="docker-postfix" \
       org.opencontainers.image.description="Postfix SMTP TLS relay" \
       org.opencontainers.image.source="https://github.com/moerchel/docker-postfix" \
