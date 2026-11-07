@@ -25,6 +25,8 @@ Releases are created automatically:
 * for every change of the image on the `main` branch (changes to documentation only don't create a release),
 * by the weekly rebuild every Monday, if Alpine provides updated packages (e.g. security fixes). The release notes list the updated packages. Without updates no new image and no release is published.
 
+Old images are removed weekly from the registry: untagged images (old builds) and `sha-*` tags older than 30 days. Release images, _latest_ and _main_ are kept.
+
 Every image is scanned with [Trivy](https://github.com/aquasecurity/trivy) before it is published. Builds with fixable HIGH or CRITICAL vulnerabilities are not published, all findings are listed in the repository's [Security tab](https://github.com/moerchel/docker-postfix/security/code-scanning).
 
 ## Build instructions
