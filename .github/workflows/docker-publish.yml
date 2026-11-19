@@ -81,20 +81,77 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build an amd64 image into the local docker daemon first, so it can be
-      # scanned before anything is published.
+      # Release version YYYYMMDD (YYYYMMDD.1, .2, ... for further releases on
+      # the same day). Only on main, where releases are created.
+      - name: Release version
+        id: version
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base=$(date -u +%Y%m%d); version=$base; n=0
+          while gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$version" >/dev/null 2>&1; do
+            n=$((n + 1)); version="$base.$n"
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Extract metadata (tags, labels) for Docker. The tags are only set
+      # after the tests, see "Publish the tested image".
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ steps.version.outputs.version != '' }}
+            type=sha
+
+      # The multi-arch image is built exactly once. Outside of PRs it is
+      # pushed by digest, without a tag, so the image that is tested and
+      # scanned below is exactly the one that gets published. PRs only build
+      # (Dependabot PRs may not push).
       # Scheduled builds skip the cache so "apk upgrade" really fetches updates.
-      - name: Build image for vulnerability scan
+      - name: Build image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          pull: true
+          no-cache: ${{ github.event_name == 'schedule' }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', env.REGISTRY, env.IMAGE_NAME) }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Supply chain attestations
+          provenance: mode=max
+          sbom: true
+
+      # The amd64 image for the tests: outside of PRs the pushed image itself,
+      # in PRs a build from the cache of the step above
+      - name: Pull the built amd64 image
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          docker pull -q --platform linux/amd64 "$IMAGE"
+          docker tag "$IMAGE" docker-postfix:scan
+
+      - name: Load the built amd64 image (PR)
+        if: github.event_name == 'pull_request'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64
-          pull: true
-          no-cache: ${{ github.event_name == 'schedule' }}
           load: true
           tags: docker-postfix:scan
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       # Relays test mails through the image to smtp-sink: health check,
       # "postfix check", SASL with SMTP_PASSWORD_FILE, no password in the
@@ -128,6 +185,51 @@ jobs:
           TRIVY_SKIP_DB_UPDATE: true
         with:
           image-ref: docker-postfix:scan
+          format: table
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      # Digests of the ARM images in the pushed image index, so Trivy scans
+      # exactly these manifests
+      - name: Find the ARM image digests
+        id: platforms
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          index=$(docker buildx imagetools inspect --raw "$IMAGE")
+          for p in arm64:arm64: armv7:arm:v7; do
+            IFS=: read -r key arch variant <<<"$p"
+            digest=$(jq -er --arg a "$arch" --arg v "$variant" \
+              '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a and (.platform.variant // "") == $v)] | if length == 1 then .[0].digest else error("not exactly one manifest") end' <<<"$index")
+            echo "linux/$arch${variant:+/$variant}: $digest"
+            echo "$key=$digest" >> "$GITHUB_OUTPUT"
+          done
+
+      # The same gate for the ARM images, scanned directly in the registry
+      # (they exist there only outside of PRs)
+      - name: Trivy scan (gate, linux/arm64)
+        if: github.event_name != 'pull_request'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: true
+          TRIVY_IMAGE_SRC: remote
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.platforms.outputs.arm64 }}
+          format: table
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: Trivy scan (gate, linux/arm/v7)
+        if: github.event_name != 'pull_request'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: true
+          TRIVY_IMAGE_SRC: remote
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.platforms.outputs.armv7 }}
           format: table
           ignore-unfixed: true
           severity: HIGH,CRITICAL
@@ -179,23 +281,17 @@ jobs:
             echo "release=$release"
           } >> "$GITHUB_OUTPUT"
 
-      # Version YYYYMMDD (YYYYMMDD.1, .2, ... for further releases on the same day)
-      # and release notes
+      # Release notes
       - name: Prepare release
         id: prepare
         if: steps.decide.outputs.release == 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           EVENT: ${{ github.event_name }}
           CHANGED: ${{ steps.decide.outputs.changed }}
+          version: ${{ steps.version.outputs.version }}
         run: |
-          base=$(date -u +%Y%m%d); version=$base; n=0
-          while gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$version" >/dev/null 2>&1; do
-            n=$((n + 1)); version="$base.$n"
-          done
-
           alpine=$(docker run --rm --entrypoint cat docker-postfix:scan /etc/alpine-release)
           postfix=$(docker run --rm --entrypoint postconf docker-postfix:scan -h mail_version)
           title="$version"
@@ -227,39 +323,30 @@ jobs:
             echo "EOF_RELEASE_NOTES"
           } >> "$GITHUB_OUTPUT"
 
-      # Extract metadata (tags, labels) for Docker
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ steps.prepare.outputs.version || 'no-release' }},enable=${{ steps.decide.outputs.release == 'true' }}
-            type=sha
+      # Sets the tags on the tested image. No new build: the tags point to
+      # the image index pushed by digest above, which is checked afterwards.
+      - name: Publish the tested image
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          args=()
+          while read -r tag; do
+            if [ -n "$tag" ]; then args+=(-t "$tag"); fi
+          done <<<"$TAGS"
+          docker buildx imagetools create "${args[@]}" "$IMAGE@$DIGEST"
 
-      # Build (all PRs) and push (if decided above) the multi-arch image
-      - name: Build and push Docker image
-        if: github.event_name == 'pull_request' || steps.decide.outputs.publish == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
-          pull: true
-          no-cache: ${{ github.event_name == 'schedule' }}
-          push: ${{ steps.decide.outputs.publish == 'true' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # Supply chain attestations
-          provenance: mode=max
-          sbom: true
+          while read -r tag; do
+            if [ -z "$tag" ]; then continue; fi
+            got=sha256:$(docker buildx imagetools inspect --raw "$tag" | sha256sum | cut -d' ' -f1)
+            echo "$tag -> $got"
+            if [ "$got" != "$DIGEST" ]; then
+              echo "::error::$tag doesn't point to the tested image $DIGEST"
+              exit 1
+            fi
+          done <<<"$TAGS"
 
   # Git tag + GitHub release for the published image. Tags and releases
   # created with the GITHUB_TOKEN don't trigger another workflow run.

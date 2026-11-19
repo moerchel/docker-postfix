@@ -29,7 +29,9 @@ Old images are removed weekly from the registry: untagged images (old builds) an
 
 Before an image is published, a smoke test relays test mails through it to [smtp-sink](https://www.postfix.org/smtp-sink.1.html) and checks the health check, `postfix check`, SASL authentication with `SMTP_PASSWORD_FILE`, that `DEBUG=yes` doesn't log the password and that no mail is sent to a relay host without STARTTLS with the default settings.
 
-Every image is scanned with [Trivy](https://github.com/aquasecurity/trivy) before it is published. Builds with fixable HIGH or CRITICAL vulnerabilities are not published, all findings are listed in the repository's [Security tab](https://github.com/moerchel/docker-postfix/security/code-scanning).
+Every image is scanned with [Trivy](https://github.com/aquasecurity/trivy) before it is published. Builds with fixable HIGH or CRITICAL vulnerabilities on any of the architectures are not published, all findings are listed in the repository's [Security tab](https://github.com/moerchel/docker-postfix/security/code-scanning).
+
+The image is built only once: it is pushed without a tag, tested and scanned, and only then gets its tags. So the published image is exactly the one that was tested.
 
 ## Build instructions
 
