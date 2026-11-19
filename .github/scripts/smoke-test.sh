@@ -81,10 +81,14 @@ send_mail() {
     echo "$status"
 }
 
+# All mails the sink received. smtp-sink -d writes one file per mail and
+# closes it at the end of the transaction.
+sink_mails() { docker exec "$sink" sh -c 'cat /tmp/mails/mail.* 2>/dev/null || true'; }
+
 step "Start smtp-sink as relay host"
 docker network create "${p}net" >/dev/null
 docker run -d --name "$sink" --network "${p}net" --entrypoint sh "$image" \
-    -c 'apk add --no-cache -q postfix-stone && exec smtp-sink -v -u postfix -D /tmp/mails :2525 10' >/dev/null
+    -c 'apk add --no-cache -q postfix-stone && exec smtp-sink -v -u postfix -d /tmp/mails/mail. :2525 10' >/dev/null
 for _ in $(seq 1 60); do
     docker exec "$sink" pgrep -x smtp-sink >/dev/null 2>&1 && break
     [ "$(docker inspect -f '{{.State.Running}}' "$sink")" = true ] || fail "sink stopped"
@@ -116,8 +120,8 @@ step "Mail through the relay with SASL"
 status=$(send_mail "${p}relay-sasl" sasl@example.org)
 grep -qF 'status=sent' <<<"$status" || fail "mail not sent"
 grep -qF "relay=$sink" <<<"$status" || fail "mail not sent to $sink"
-mails=$(docker exec "$sink" cat /tmp/mails)
-grep -qF 'X-Rcpt-Args: TO:<sasl@example.org>' <<<"$mails" || fail "mail not in the sink"
+mails=$(sink_mails)
+grep -qF 'X-Rcpt-Args: TO:<sasl@example.org>' <<<"$mails" || fail "mail not in the sink: $mails"
 grep -qF 'Subject: Smoke test' <<<"$mails" || fail "subject not in the sink"
 echo "mail arrived in the sink"
 
@@ -148,7 +152,7 @@ docker exec "${p}relay-tls" postconf smtp_tls_security_level
 status=$(send_mail "${p}relay-tls" tls@example.org)
 grep -qF 'status=deferred' <<<"$status" || fail "mail was not deferred"
 grep -qF 'TLS is required, but was not offered' <<<"$status" || fail "deferred for another reason"
-if docker exec "$sink" grep -qF 'tls@example.org' /tmp/mails; then fail "mail arrived without TLS"; fi
+if grep -qF 'tls@example.org' <<<"$(sink_mails)"; then fail "mail arrived without TLS"; fi
 echo "mail was deferred, nothing sent without TLS"
 
 printf '\nSmoke test passed\n'
