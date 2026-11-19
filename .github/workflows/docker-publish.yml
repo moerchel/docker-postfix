@@ -44,7 +44,7 @@ jobs:
           persist-credentials: false
 
       - name: ShellCheck
-        run: shellcheck run.sh
+        run: shellcheck run.sh .github/scripts/*.sh
 
   build:
     needs: lint
@@ -96,6 +96,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Relays test mails through the image to smtp-sink: health check,
+      # "postfix check", SASL with SMTP_PASSWORD_FILE, no password in the
+      # DEBUG log, no mail without TLS by default
+      - name: Smoke test
+        run: .github/scripts/smoke-test.sh docker-postfix:scan
+
       # Report all known vulnerabilities to the repository's Security tab
       - name: Trivy scan (report)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -107,7 +113,8 @@ jobs:
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
 
       - name: Upload Trivy results to GitHub Security tab
-        if: always()
+        # Skipped if an earlier step failed before Trivy wrote the file
+        if: always() && hashFiles('trivy-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-results.sarif
