@@ -5,7 +5,7 @@ LABEL org.opencontainers.image.title="docker-postfix" \
       org.opencontainers.image.source="https://github.com/moerchel/docker-postfix" \
       org.opencontainers.image.licenses="GPL-3.0"
 
-# Versions are not pinned on purpose: the weekly rebuild should pick up the
+# Versions are not pinned on purpose: the scheduled rebuild should pick up the
 # latest security fixes of the Alpine branch.
 # hadolint ignore=DL3018
 RUN apk upgrade --no-cache && \
