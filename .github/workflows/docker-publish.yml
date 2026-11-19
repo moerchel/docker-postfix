@@ -334,9 +334,9 @@ jobs:
             fi
           } > notes.md
 
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "title=$title" >> "$GITHUB_OUTPUT"
           {
+            echo "version=$version"
+            echo "title=$title"
             echo "notes<<EOF_RELEASE_NOTES"
             cat notes.md
             echo "EOF_RELEASE_NOTES"
