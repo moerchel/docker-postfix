@@ -23,7 +23,7 @@ Images are published on [GitHub Container Registry](https://github.com/moerchel/
 Releases are created automatically:
 
 * for every change of the image on the `main` branch (changes to documentation only don't create a release),
-* by the weekly rebuild every Monday, if Alpine provides updated packages (e.g. security fixes). The release notes list the updated packages. Without updates no new image and no release is published.
+* by the scheduled rebuild every 3 days (on the 1st, 4th, 7th, … of the month, around 04:17 UTC), if Alpine provides updated packages (e.g. security fixes). The release notes list the updated packages. Without updates no new image and no release is published.
 
 Old images are removed weekly from the registry: untagged images (old builds) and `sha-*` tags older than 30 days. Release images, _latest_ and _main_ are kept.
 
