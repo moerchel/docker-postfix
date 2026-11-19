@@ -190,6 +190,23 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: '1'
 
+      # Digests of the ARM images in the pushed image index, so Trivy scans
+      # exactly these manifests
+      - name: Find the ARM image digests
+        id: platforms
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          index=$(docker buildx imagetools inspect --raw "$IMAGE")
+          for p in arm64:arm64: armv7:arm:v7; do
+            IFS=: read -r key arch variant <<<"$p"
+            digest=$(jq -er --arg a "$arch" --arg v "$variant" \
+              '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a and (.platform.variant // "") == $v)] | if length == 1 then .[0].digest else error("not exactly one manifest") end' <<<"$index")
+            echo "linux/$arch${variant:+/$variant}: $digest"
+            echo "$key=$digest" >> "$GITHUB_OUTPUT"
+          done
+
       # The same gate for the ARM images, scanned directly in the registry
       # (they exist there only outside of PRs)
       - name: Trivy scan (gate, linux/arm64)
@@ -197,10 +214,9 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_SKIP_DB_UPDATE: true
-          TRIVY_PLATFORM: linux/arm64
           TRIVY_IMAGE_SRC: remote
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.platforms.outputs.arm64 }}
           format: table
           ignore-unfixed: true
           severity: HIGH,CRITICAL
@@ -211,10 +227,9 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_SKIP_DB_UPDATE: true
-          TRIVY_PLATFORM: linux/arm/v7
           TRIVY_IMAGE_SRC: remote
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.platforms.outputs.armv7 }}
           format: table
           ignore-unfixed: true
           severity: HIGH,CRITICAL
