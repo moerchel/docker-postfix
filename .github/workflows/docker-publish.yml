@@ -15,6 +15,7 @@ on:
       - 'LICENSE'
       - 'docker-compose/**'
       - '.github/dependabot.yml'
+      - '.github/workflows/cleanup-packages.yml'
     # Manually pushed tags (e.g. 20260416, v1.2.3) are published as image tags
     tags: [ '2*', 'v*.*.*' ]
   pull_request:
@@ -37,6 +38,7 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -70,6 +72,8 @@ jobs:
   build:
     needs: lint
     runs-on: ubuntu-latest
+    # Normally a few minutes, the limit stops a hanging run (default: 6 hours)
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -375,6 +379,7 @@ jobs:
     needs: build
     if: needs.build.outputs.release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
