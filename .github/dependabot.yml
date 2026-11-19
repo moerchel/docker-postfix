@@ -1,11 +1,18 @@
 version: 2
 updates:
+  # New versions are only proposed after 7 days, so a compromised or broken
+  # release is usually withdrawn before it gets here. Security updates are
+  # not delayed.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
