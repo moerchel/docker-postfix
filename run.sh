@@ -2,6 +2,11 @@
 
 [ "${DEBUG}" == "yes" ] && set -x
 
+# With DEBUG=yes, set -x would print the SMTP password to the log. Tracing
+# is paused around every command that contains it.
+function trace_off() { { set +x; } 2>/dev/null; }
+function trace_on() { if [ "${DEBUG}" == "yes" ]; then set -x; fi; }
+
 function add_config_value() {
   local key=${1}
   local value=${2}
@@ -13,12 +18,16 @@ function add_config_value() {
 }
 
 # Read password and username from file to avoid unsecure env variables
+trace_off
 if [ -n "${SMTP_PASSWORD_FILE}" ]; then [ -e "${SMTP_PASSWORD_FILE}" ] && SMTP_PASSWORD=$(cat "${SMTP_PASSWORD_FILE}") || echo "SMTP_PASSWORD_FILE defined, but file not existing, skipping."; fi
+trace_on
 if [ -n "${SMTP_USERNAME_FILE}" ]; then [ -e "${SMTP_USERNAME_FILE}" ] && SMTP_USERNAME=$(cat "${SMTP_USERNAME_FILE}") || echo "SMTP_USERNAME_FILE defined, but file not existing, skipping."; fi
 
 [ -z "${SMTP_SERVER}" ] && echo "ERROR: SMTP_SERVER is not set" && exit 1
 [ -z "${SERVER_HOSTNAME}" ] && echo "ERROR: SERVER_HOSTNAME is not set" && exit 1
+trace_off
 [ -n "${SMTP_USERNAME}" ] && [ -z "${SMTP_PASSWORD}" ] && echo "ERROR: SMTP_USERNAME is set but SMTP_PASSWORD is not set" && exit 1
+trace_on
 
 SMTP_PORT="${SMTP_PORT:-587}"
 
@@ -70,10 +79,12 @@ add_config_value "smtp_host_lookup" "native,dns"
 # Create sasl_passwd file with auth credentials (unless one was mounted)
 if [ -n "${SMTP_USERNAME}" ] && [ ! -f /etc/postfix/sasl_passwd ]; then
   echo "Adding SASL authentication configuration"
+  trace_off
   (
     umask 077
     printf '[%s]:%s %s:%s\n' "${SMTP_SERVER}" "${SMTP_PORT}" "${SMTP_USERNAME}" "${SMTP_PASSWORD}" > /etc/postfix/sasl_passwd
   )
+  trace_on
 fi
 if [ -f /etc/postfix/sasl_passwd ]; then
   postmap /etc/postfix/sasl_passwd
