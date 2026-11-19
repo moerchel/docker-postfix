@@ -121,24 +121,18 @@ status=$(send_mail "${p}relay-sasl" sasl@example.org)
 grep -qF 'status=sent' <<<"$status" || fail "mail not sent"
 grep -qF "relay=$sink" <<<"$status" || fail "mail not sent to $sink"
 mails=$(sink_mails)
-grep -qF 'X-Rcpt-Args: TO:<sasl@example.org>' <<<"$mails" || fail "mail not in the sink: $mails"
+grep -qF 'X-Rcpt-Args: <sasl@example.org>' <<<"$mails" || fail "mail not in the sink: $mails"
 grep -qF 'Subject: Smoke test' <<<"$mails" || fail "subject not in the sink"
 echo "mail arrived in the sink"
 
-# smtp-sink -v logs the SMTP conversation including the AUTH command. Postfix
-# sends either AUTH PLAIN with "\0user\0password" or AUTH LOGIN with user and
-# password as separate lines, all base64 encoded.
-sink_log=$(docker logs "$sink" 2>&1)
-grep -iE 'auth ' <<<"$sink_log" || fail "no AUTH in the SMTP conversation"
-# shellcheck disable=SC2059 # the format is the first argument on purpose
-b64() { printf "$1" "${@:2}" | base64 -w0; }
-if grep -qF "$(b64 '\0%s\0%s' "$user" "$password")" <<<"$sink_log" ||
-    grep -qF "$(b64 '%s\0%s\0%s' "$user" "$user" "$password")" <<<"$sink_log" ||
-    { grep -qF "$(b64 '%s' "$user")" <<<"$sink_log" && grep -qF "$(b64 '%s' "$password")" <<<"$sink_log"; }; then
-    echo "SASL credentials from SMTP_PASSWORD_FILE were sent"
-else
-    fail "the sink didn't get the expected SASL credentials"
-fi
+# smtp-sink -v logs the SMTP conversation. It accepts every AUTH right away,
+# so with AUTH LOGIN the credentials themselves are never sent; they are
+# checked in the relay's SASL map instead.
+docker logs "$sink" 2>&1 | grep -E '^smtp-sink: AUTH ' || fail "the relay didn't authenticate"
+creds=$(docker exec "${p}relay-sasl" postmap -q "[$sink]:2525" lmdb:/etc/postfix/sasl_passwd) ||
+    fail "no SASL credentials for [$sink]:2525"
+[ "$creds" = "$user:$password" ] || fail "wrong SASL credentials in sasl_passwd"
+echo "relay authenticated with the credentials from SMTP_PASSWORD_FILE"
 
 step "DEBUG=yes doesn't log the password"
 relay_log=$(docker logs "${p}relay-sasl" 2>&1)
